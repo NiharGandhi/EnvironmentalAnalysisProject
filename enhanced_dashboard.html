@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoRa Environmental Monitoring Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Leaflet CSS for maps -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- Leaflet Heatmap Plugin -->
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  
+  <style>
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    @keyframes ping {
+      75%, 100% {
+        transform: scale(2);
+        opacity: 0;
+      }
+    }
+    .animate-pulse {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .animate-ping {
+      animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+    .transition-all {
+      transition-property: all;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+      transition-duration: 150ms;
+    }
+    .duration-500 {
+      transition-duration: 500ms;
+    }
+    #map, #pathMap {
+      height: 600px;
+      border-radius: 0.5rem;
+      position: relative;
+    }
+    .leaflet-popup-content {
+      color: #1e293b;
+    }
+    .map-layer-btn {
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .map-layer-btn:hover {
+      transform: scale(1.05);
+    }
+    .map-layer-btn.active {
+      border: 2px solid #3b82f6;
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+    .map-style-btn {
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .map-style-btn:hover {
+      transform: scale(1.05);
+    }
+    .map-style-btn.active {
+      border: 2px solid #10b981;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+    }
+    .leaflet-control-layers {
+      display: none;
+    }
+    .heatmap-legend {
+      background: rgba(15, 23, 42, 0.95);
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .legend-gradient {
+      height: 20px;
+      border-radius: 4px;
+      margin: 8px 0;
+    }
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #cbd5e1;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-white">
+  <div class="min-h-screen p-4 md:p-8">
+    <div class="max-w-7xl mx-auto space-y-8">
+      <!-- Header -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="text-white mb-2">LoRa Environmental Dashboard</h1>
+            <p class="text-slate-400">Real-time monitoring powered by ThingSpeak</p>
+          </div>
+          <div class="hidden md:flex items-center gap-3 px-4 py-2 bg-slate-900/50 border border-slate-800 rounded-lg">
+            <div class="relative">
+              <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+              <div class="absolute inset-0 w-2 h-2 rounded-full bg-emerald-500 animate-ping"></div>
+            </div>
+            <span class="text-slate-300" id="connection-status">Connecting...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Interactive Heatmap -->
+      <div class="bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur overflow-hidden">
+        <div class="p-6 pb-4">
+          <h3 class="flex items-center gap-3 text-white text-lg font-semibold mb-4">
+            <div class="p-2 bg-indigo-500/10 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            </div>
+            Environmental Heatmap
+          </h3>
+          
+          <!-- Map Style Controls -->
+          <div class="mb-4">
+            <div class="text-slate-400 text-xs mb-2">Map Style</div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <button class="map-style-btn active px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="changeMapStyle('openstreetmap')" id="style-openstreetmap">
+                🗺️ OpenStreetMap
+              </button>
+              <button class="map-style-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="changeMapStyle('satellite')" id="style-satellite">
+                🛰️ Satellite
+              </button>
+              <button class="map-style-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="changeMapStyle('light')" id="style-light">
+                ☀️ Light
+              </button>
+              <button class="map-style-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="changeMapStyle('dark')" id="style-dark">
+                🌙 Dark
+              </button>
+            </div>
+          </div>
+
+          <!-- Heatmap Layer Controls -->
+          <div class="mb-4">
+            <div class="text-slate-400 text-xs mb-2">Heatmap Layer</div>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <button class="map-layer-btn active px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="toggleHeatmapLayer('temperature')" id="btn-temperature">
+                🌡️ Temperature
+              </button>
+              <button class="map-layer-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="toggleHeatmapLayer('airquality')" id="btn-airquality">
+                💨 Air Quality
+              </button>
+              <button class="map-layer-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="toggleHeatmapLayer('noise')" id="btn-noise">
+                🔊 Noise Level
+              </button>
+              <button class="map-layer-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="toggleHeatmapLayer('rssi')" id="btn-rssi">
+                📡 RSSI
+              </button>
+              <button class="map-layer-btn px-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-white hover:bg-slate-700/50"
+                      onclick="toggleHeatmapLayer('snr')" id="btn-snr">
+                📊 SNR
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="px-6 pb-6">
+          <div id="map"></div>
+
+          <!-- Heatmap Legend -->
+          <div class="mt-4 heatmap-legend">
+            <div class="text-white font-semibold mb-2" id="legend-title">Temperature Heatmap</div>
+            <div id="legend-gradient" class="legend-gradient"></div>
+            <div id="legend-labels" class="legend-labels"></div>
+            <div class="text-slate-400 text-xs mt-2" id="legend-description"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Path Heatmap -->
+      <div class="bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur overflow-hidden">
+        <div class="p-6 pb-4">
+          <h3 class="flex items-center gap-3 text-white text-lg font-semibold mb-4">
+            <div class="p-2 bg-purple-500/10 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            </div>
+            Path-Based Heatmap Visualization
+          </h3>
+          <p class="text-slate-400 text-sm mb-4">Shows sensor values along the measurement path with color-coded segments</p>
+        </div>
+
+        <div class="px-6 pb-6">
+          <div id="pathMap"></div>
+
+          <!-- Path Legend -->
+          <div class="mt-4 heatmap-legend">
+            <div class="text-white font-semibold mb-2" id="path-legend-title">Temperature Path Visualization</div>
+            <div id="path-legend-gradient" class="legend-gradient"></div>
+            <div id="path-legend-labels" class="legend-labels"></div>
+            <div class="text-slate-400 text-xs mt-2" id="path-legend-description"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GPS Location -->
+      <div class="bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur">
+        <div class="p-6 pb-4">
+          <h3 class="flex items-center gap-3 text-white text-lg font-semibold">
+            <div class="p-2 bg-blue-500/10 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+            </div>
+            Latest GPS Location
+          </h3>
+        </div>
+        <div class="px-6 pb-6">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div class="md:col-span-2 space-y-2">
+              <div class="text-slate-500">Coordinates</div>
+              <div class="text-white font-mono" id="gps-coordinates">Loading...</div>
+            </div>
+            <div class="space-y-2">
+              <div class="text-slate-500">Altitude</div>
+              <div class="text-white" id="gps-altitude">--</div>
+            </div>
+            <div class="space-y-2">
+              <div class="text-slate-500">Satellites</div>
+              <div class="flex items-center gap-2">
+                <div class="text-white" id="gps-satellites">--</div>
+                <div class="text-slate-500">/</div>
+                <div class="text-slate-500">12</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sensor Data & Signal Quality -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Latest Sensor Data -->
+        <div class="bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur">
+          <div class="p-6 pb-4">
+            <h3 class="flex items-center gap-3 text-white text-lg font-semibold">
+              <div class="p-2 bg-emerald-500/10 rounded-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+              </div>
+              Sensor Readings
+            </h3>
+          </div>
+          <div class="px-6 pb-6 space-y-8">
+            <!-- Temperature -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="p-2 bg-rose-500/10 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"></path></svg>
+                  </div>
+                  <span class="text-slate-300">Temperature</span>
+                </div>
+                <span class="text-white tabular-nums" id="temp-value">--</span>
+              </div>
+              <div class="relative w-full bg-slate-800/50 rounded-full h-2 overflow-hidden">
+                <div id="temp-bar" class="absolute inset-0 bg-gradient-to-r from-rose-500 to-rose-400 rounded-full transition-all duration-500 shadow-lg shadow-rose-500/20" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Air Quality -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="p-2 bg-cyan-500/10 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2"></path><path d="M9.6 4.6A2 2 0 1 1 11 8H2"></path><path d="M12.6 19.4A2 2 0 1 0 14 16H2"></path></svg>
+                  </div>
+                  <span class="text-slate-300">Air Quality</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-white tabular-nums" id="aqi-value">--</span>
+                  <span id="aqi-badge" class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-white border-0 shadow-lg"></span>
+                </div>
+              </div>
+              <div class="relative w-full bg-slate-800/50 rounded-full h-2 overflow-hidden">
+                <div id="aqi-bar" class="absolute inset-0 rounded-full transition-all duration-500 shadow-lg" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Noise Level -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="p-2 bg-purple-500/10 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+                  </div>
+                  <span class="text-slate-300">Noise Level</span>
+                </div>
+                <span class="text-white tabular-nums" id="noise-value">--</span>
+              </div>
+              <div class="relative w-full bg-slate-800/50 rounded-full h-2 overflow-hidden">
+                <div id="noise-bar" class="absolute inset-0 bg-gradient-to-r from-purple-500 to-purple-400 rounded-full transition-all duration-500 shadow-lg shadow-purple-500/20" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signal Quality -->
+        <div class="bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur">
+          <div class="p-6 pb-4">
+            <h3 class="flex items-center gap-3 text-white text-lg font-semibold">
+              <div class="p-2 bg-amber-500/10 rounded-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+              </div>
+              Signal Quality
+            </h3>
+          </div>
+          <div class="px-6 pb-6 space-y-6">
+            <!-- RSSI -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-300">RSSI</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-white tabular-nums" id="rssi-value">--</span>
+                  <span id="rssi-badge" class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-white border-0 shadow-lg"></span>
+                </div>
+              </div>
+              <div class="relative w-full bg-slate-800/50 rounded-full h-2 overflow-hidden">
+                <div id="rssi-bar" class="absolute inset-0 rounded-full transition-all duration-500 shadow-lg" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- SNR -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-300">SNR</span>
+                <span class="text-white tabular-nums" id="snr-value">--</span>
+              </div>
+              <div class="relative w-full bg-slate-800/50 rounded-full h-2 overflow-hidden">
+                <div id="snr-bar" class="absolute inset-0 bg-gradient-to-r from-cyan-500 to-cyan-400 rounded-full transition-all duration-500 shadow-lg shadow-cyan-500/20" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Signal Details -->
+            <div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800">
+              <div>
+                <div class="text-slate-500 mb-1">Frequency</div>
+                <div class="text-white">868.1 MHz</div>
+              </div>
+              <div>
+                <div class="text-slate-500 mb-1">Bandwidth</div>
+                <div class="text-white">125 kHz</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Status -->
+      <div class="bg-slate-900/50 border border-slate-800 rounded-lg backdrop-blur">
+        <div class="p-6 pb-4">
+          <h3 class="flex items-center gap-3 text-white text-lg font-semibold">
+            <div class="p-2 bg-indigo-500/10 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5V19A9 3 0 0 0 21 19V5"></path><path d="M3 12A9 3 0 0 0 21 12"></path></svg>
+            </div>
+            System Status
+          </h3>
+        </div>
+        <div class="px-6 pb-6">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+              <div class="text-slate-500 mb-2">Status</div>
+              <div class="flex items-center gap-2">
+                <div class="relative">
+                  <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                  <div class="absolute inset-0 w-2 h-2 rounded-full bg-emerald-500 animate-ping"></div>
+                </div>
+                <span class="text-white capitalize" id="system-status">online</span>
+              </div>
+            </div>
+            <div class="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+              <div class="text-slate-500 mb-2">Total Readings</div>
+              <div class="text-white tabular-nums" id="total-readings">--</div>
+            </div>
+            <div class="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+              <div class="text-slate-500 mb-2 flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                Last Update
+              </div>
+              <div class="text-white tabular-nums" id="last-update">--</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ThingSpeak Configuration
+    const CHANNEL_ID = '3175016';
+    const READ_API_KEY = 'KOVBBXA9NABIFEXC';
+    const BASE_URL = `https://api.thingspeak.com/channels/${CHANNEL_ID}`;
+
+    // Receiver coordinates
+    const RECEIVER_LAT = 25.125359;
+    const RECEIVER_LNG = 55.384521;
+
+    // Map variables
+    let map;
+    let pathMap;
+    let currentLayer = 'temperature';
+    let currentMapStyle = 'openstreetmap';
+    let heatmapLayers = {};
+    let valueCircles = {}; // Store value-based circle layers
+    let pathSegments = {}; // Store path segments for each layer
+    let markers = [];
+    let allData = [];
+    let baseLayers = {};
+    let pathBaseLayers = {};
+    let currentBaseLayer;
+    let currentPathBaseLayer;
+    let receiverMarker;
+    let pathReceiverMarker;
+
+    // Calculate distance between two coordinates (Haversine formula)
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3; // Earth's radius in meters
+      const φ1 = lat1 * Math.PI / 180;
+      const φ2 = lat2 * Math.PI / 180;
+      const Δφ = (lat2 - lat1) * Math.PI / 180;
+      const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+      const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+      return R * c; // Distance in meters
+    }
+
+    // Initialize map
+    function initMap() {
+      // Dubai Silicon Oasis center coordinates (where most data points are)
+      const DSO_LAT = 25.125;
+      const DSO_LNG = 55.385;
+
+      map = L.map('map').setView([DSO_LAT, DSO_LNG], 14);
+
+      // Define base layers
+      baseLayers.openstreetmap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+      });
+
+      baseLayers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19
+      });
+
+      baseLayers.light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors, © CARTO',
+        maxZoom: 19
+      });
+
+      baseLayers.dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors, © CARTO',
+        maxZoom: 19
+      });
+
+      // Add default layer
+      currentBaseLayer = baseLayers.openstreetmap;
+      currentBaseLayer.addTo(map);
+
+      // Add receiver marker
+      receiverMarker = L.marker([RECEIVER_LAT, RECEIVER_LNG], {
+        icon: L.divIcon({
+          className: 'custom-receiver-marker',
+          html: `<div style="background: #10b981; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);"></div>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        })
+      }).addTo(map);
+
+      receiverMarker.bindPopup(`
+        <div style="font-family: Arial; color: #1e293b;">
+          <h4 style="margin: 0 0 8px 0; color: #0f172a;">📡 Receiver Station</h4>
+          <p style="margin: 4px 0;"><b>Coordinates:</b><br/>${RECEIVER_LAT.toFixed(6)}, ${RECEIVER_LNG.toFixed(6)}</p>
+        </div>
+      `);
+
+      // Initialize path map
+      pathMap = L.map('pathMap').setView([DSO_LAT, DSO_LNG], 14);
+
+      // Define base layers for path map
+      pathBaseLayers.openstreetmap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+      });
+
+      pathBaseLayers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19
+      });
+
+      pathBaseLayers.light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors, © CARTO',
+        maxZoom: 19
+      });
+
+      pathBaseLayers.dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors, © CARTO',
+        maxZoom: 19
+      });
+
+      // Add default layer to path map
+      currentPathBaseLayer = pathBaseLayers.openstreetmap;
+      currentPathBaseLayer.addTo(pathMap);
+
+      // Add receiver marker to path map
+      pathReceiverMarker = L.marker([RECEIVER_LAT, RECEIVER_LNG], {
+        icon: L.divIcon({
+          className: 'custom-receiver-marker',
+          html: `<div style="background: #10b981; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);"></div>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        })
+      }).addTo(pathMap);
+
+      pathReceiverMarker.bindPopup(`
+        <div style="font-family: Arial; color: #1e293b;">
+          <h4 style="margin: 0 0 8px 0; color: #0f172a;">📡 Receiver Station</h4>
+          <p style="margin: 4px 0;"><b>Coordinates:</b><br/>${RECEIVER_LAT.toFixed(6)}, ${RECEIVER_LNG.toFixed(6)}</p>
+        </div>
+      `);
+
+      // Sync map styles
+      map.on('baselayerchange', function(e) {
+        changeMapStyle(currentMapStyle, true);
+      });
+    }
+
+    // Change map style
+    function changeMapStyle(style, skipButtonUpdate) {
+      if (baseLayers[style] && currentBaseLayer !== baseLayers[style]) {
+        map.removeLayer(currentBaseLayer);
+        currentBaseLayer = baseLayers[style];
+        currentBaseLayer.addTo(map);
+        currentMapStyle = style;
+
+        // Also update path map
+        pathMap.removeLayer(currentPathBaseLayer);
+        currentPathBaseLayer = pathBaseLayers[style];
+        currentPathBaseLayer.addTo(pathMap);
+
+        // Update button styles
+        if (!skipButtonUpdate) {
+          document.querySelectorAll('.map-style-btn').forEach(btn => {
+            btn.classList.remove('active');
+          });
+          document.getElementById(`style-${style}`).classList.add('active');
+        }
+      }
+    }
+    
+    // Fetch data from ThingSpeak
+    async function fetchThingSpeakData() {
+      try {
+        const response = await fetch(`${BASE_URL}/feeds.json?api_key=${READ_API_KEY}&results=8000`);
+        const data = await response.json();
+
+        if (data.feeds && data.feeds.length > 0) {
+          // Filter out invalid data points
+          allData = data.feeds.filter(feed => {
+            const lat = parseFloat(feed.field4);
+            const lng = parseFloat(feed.field5);
+            const date = new Date(feed.created_at);
+
+            // Exclude if:
+            // 1. Coordinates are zero or missing
+            // 2. Coordinates match default/placeholder value (25.204800, 55.270802)
+            // 3. Date is before November 22, 2025 (filter out old test data)
+            const isDefaultCoordinate = (
+              Math.abs(lat - 25.204800) < 0.000001 &&
+              Math.abs(lng - 55.270802) < 0.000001
+            );
+
+            const isOldData = date < new Date('2025-11-22T00:00:00Z');
+
+            return feed.field4 && feed.field5 &&
+                   lat !== 0 && lng !== 0 &&
+                   !isDefaultCoordinate &&
+                   !isOldData;
+          });
+
+          updateDashboard(allData);
+          updateHeatmap(allData);
+          document.getElementById('connection-status').textContent = 'Connected';
+          return true;
+        }
+      } catch (error) {
+        console.error('Error fetching ThingSpeak data:', error);
+        document.getElementById('connection-status').textContent = 'Connection Error';
+        return false;
+      }
+    }
+    
+    // Update dashboard with latest data
+    function updateDashboard(data) {
+      if (!data || data.length === 0) return;
+      
+      const latest = data[data.length - 1];
+      
+      // GPS
+      const lat = parseFloat(latest.field4) || 0;
+      const lng = parseFloat(latest.field5) || 0;
+      document.getElementById('gps-coordinates').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      document.getElementById('gps-satellites').textContent = latest.field8 || '0';
+      
+      // Temperature
+      const temp = parseFloat(latest.field1) || 0;
+      document.getElementById('temp-value').textContent = `${temp.toFixed(1)}°C`;
+      document.getElementById('temp-bar').style.width = `${Math.min((temp / 50) * 100, 100)}%`;
+      
+      // Air Quality
+      const aqi = parseInt(latest.field2) || 0;
+      const aqiStatus = getAirQualityStatus(aqi);
+      document.getElementById('aqi-value').textContent = aqi;
+      const aqiBadge = document.getElementById('aqi-badge');
+      aqiBadge.textContent = aqiStatus.label;
+      aqiBadge.className = `inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-white border-0 shadow-lg ${aqiStatus.color}`;
+      const aqiBar = document.getElementById('aqi-bar');
+      aqiBar.className = `absolute inset-0 rounded-full transition-all duration-500 shadow-lg ${aqiStatus.color}`;
+      aqiBar.style.width = `${Math.min((aqi / 500) * 100, 100)}%`;
+      
+      // Noise
+      const noise = parseInt(latest.field3) || 0;
+      document.getElementById('noise-value').textContent = `${noise} dB`;
+      document.getElementById('noise-bar').style.width = `${Math.min((noise / 400) * 100, 100)}%`;
+      
+      // RSSI
+      const rssi = parseInt(latest.field6) || -120;
+      const signalStrength = getSignalStrength(rssi);
+      document.getElementById('rssi-value').textContent = `${rssi} dBm`;
+      const rssiBadge = document.getElementById('rssi-badge');
+      rssiBadge.textContent = signalStrength.label;
+      rssiBadge.className = `inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-white border-0 shadow-lg ${signalStrength.color}`;
+      const rssiBar = document.getElementById('rssi-bar');
+      rssiBar.className = `absolute inset-0 rounded-full transition-all duration-500 shadow-lg ${signalStrength.color}`;
+      rssiBar.style.width = `${Math.min(((rssi + 120) / 40) * 100, 100)}%`;
+      
+      // SNR
+      const snr = parseFloat(latest.field7) || 0;
+      document.getElementById('snr-value').textContent = `${snr.toFixed(1)} dB`;
+      document.getElementById('snr-bar').style.width = `${Math.min(((snr + 10) / 20) * 100, 100)}%`;
+      
+      // System Status
+      document.getElementById('total-readings').textContent = data.length.toLocaleString();
+      document.getElementById('last-update').textContent = new Date(latest.created_at).toLocaleString();
+    }
+    
+    // Get color for value based on layer type
+    function getColorForValue(layer, value) {
+      let normalized;
+
+      switch(layer) {
+        case 'temperature':
+          // 20-50°C range
+          normalized = Math.max(0, Math.min(1, (value - 20) / 30));
+          return interpolateColor(['#0000ff', '#ffff00', '#ff0000'], normalized);
+
+        case 'airquality':
+          // 0-200 AQI range
+          normalized = Math.max(0, Math.min(1, value / 200));
+          return interpolateColor(['#00ff00', '#7fff00', '#ffff00', '#ff7f00', '#ff0000', '#8b0000'], normalized);
+
+        case 'noise':
+          // 0-400 dB range
+          normalized = Math.max(0, Math.min(1, value / 400));
+          return interpolateColor(['#00bfff', '#9370db', '#ff1493', '#ff0000', '#8b0000'], normalized);
+
+        case 'rssi':
+          // -120 to -40 dBm range
+          normalized = Math.max(0, Math.min(1, (value + 120) / 80));
+          return interpolateColor(['#8b0000', '#ff7f00', '#00ff00'], normalized);
+
+        case 'snr':
+          // -10 to +20 dB range
+          normalized = Math.max(0, Math.min(1, (value + 10) / 30));
+          return interpolateColor(['#ff0000', '#ffff00', '#00ffff'], normalized);
+
+        default:
+          return '#3b82f6';
+      }
+    }
+
+    // Interpolate between colors
+    function interpolateColor(colors, value) {
+      if (value <= 0) return colors[0];
+      if (value >= 1) return colors[colors.length - 1];
+
+      const scaledValue = value * (colors.length - 1);
+      const index = Math.floor(scaledValue);
+      const fraction = scaledValue - index;
+
+      const color1 = hexToRgb(colors[index]);
+      const color2 = hexToRgb(colors[Math.min(index + 1, colors.length - 1)]);
+
+      const r = Math.round(color1.r + (color2.r - color1.r) * fraction);
+      const g = Math.round(color1.g + (color2.g - color1.g) * fraction);
+      const b = Math.round(color1.b + (color2.b - color1.b) * fraction);
+
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    function hexToRgb(hex) {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : {r: 0, g: 0, b: 0};
+    }
+
+    // Update heatmap
+    function updateHeatmap(data) {
+      // Clear existing layers
+      Object.values(valueCircles).forEach(circles => {
+        circles.forEach(circle => map.removeLayer(circle));
+      });
+      markers.forEach(marker => map.removeLayer(marker));
+      markers = [];
+      valueCircles = {};
+
+      // Initialize arrays for each layer
+      valueCircles.temperature = [];
+      valueCircles.airquality = [];
+      valueCircles.noise = [];
+      valueCircles.rssi = [];
+      valueCircles.snr = [];
+
+      data.forEach(feed => {
+        const lat = parseFloat(feed.field4);
+        const lng = parseFloat(feed.field5);
+
+        if (lat && lng && lat !== 0 && lng !== 0) {
+          const temp = parseFloat(feed.field1) || 0;
+          const aqi = parseInt(feed.field2) || 0;
+          const noise = parseInt(feed.field3) || 0;
+          const rssi = parseInt(feed.field6) || 0;
+          const snr = parseFloat(feed.field7) || 0;
+
+          // Calculate distance from receiver
+          const distance = calculateDistance(RECEIVER_LAT, RECEIVER_LNG, lat, lng);
+          const distanceKm = (distance / 1000).toFixed(2);
+          const distanceM = distance.toFixed(0);
+
+          // Create colored circles for each value type
+          const tempCircle = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: getColorForValue('temperature', temp),
+            color: '#fff',
+            weight: 1,
+            opacity: 0.8,
+            fillOpacity: 0.7
+          });
+
+          const aqiCircle = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: getColorForValue('airquality', aqi),
+            color: '#fff',
+            weight: 1,
+            opacity: 0.8,
+            fillOpacity: 0.7
+          });
+
+          const noiseCircle = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: getColorForValue('noise', noise),
+            color: '#fff',
+            weight: 1,
+            opacity: 0.8,
+            fillOpacity: 0.7
+          });
+
+          const rssiCircle = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: getColorForValue('rssi', rssi),
+            color: '#fff',
+            weight: 1,
+            opacity: 0.8,
+            fillOpacity: 0.7
+          });
+
+          const snrCircle = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: getColorForValue('snr', snr),
+            color: '#fff',
+            weight: 1,
+            opacity: 0.8,
+            fillOpacity: 0.7
+          });
+
+          // Add popup to all circles
+          const popupContent = `
+            <div style="font-family: Arial; color: #1e293b;">
+              <h4 style="margin: 0 0 8px 0; color: #0f172a;">📊 Sensor Data</h4>
+              <p style="margin: 4px 0;"><b>📍 Distance from Receiver:</b> ${distanceKm} km (${distanceM} m)</p>
+              <p style="margin: 4px 0;"><b>🌡️ Temp:</b> ${temp.toFixed(1)}°C</p>
+              <p style="margin: 4px 0;"><b>💨 AQI:</b> ${aqi}</p>
+              <p style="margin: 4px 0;"><b>🔊 Noise:</b> ${noise} dB</p>
+              <p style="margin: 4px 0;"><b>📡 RSSI:</b> ${rssi} dBm</p>
+              <p style="margin: 4px 0;"><b>📊 SNR:</b> ${snr.toFixed(1)} dB</p>
+              <p style="margin: 4px 0; font-size: 11px; color: #64748b;">${new Date(feed.created_at).toLocaleString()}</p>
+            </div>
+          `;
+
+          tempCircle.bindPopup(popupContent);
+          aqiCircle.bindPopup(popupContent);
+          noiseCircle.bindPopup(popupContent);
+          rssiCircle.bindPopup(popupContent);
+          snrCircle.bindPopup(popupContent);
+
+          valueCircles.temperature.push(tempCircle);
+          valueCircles.airquality.push(aqiCircle);
+          valueCircles.noise.push(noiseCircle);
+          valueCircles.rssi.push(rssiCircle);
+          valueCircles.snr.push(snrCircle);
+
+          // Add small marker
+          const marker = L.circleMarker([lat, lng], {
+            radius: 3,
+            fillColor: '#3b82f6',
+            color: '#fff',
+            weight: 1,
+            opacity: 0.6,
+            fillOpacity: 0.4
+          });
+
+          marker.bindPopup(popupContent);
+          markers.push(marker);
+        }
+      });
+
+      // Create path visualizations
+      updatePathVisualization(data);
+
+      // Show initial layer
+      showHeatmapLayer(currentLayer);
+
+      // Add markers
+      markers.forEach(marker => marker.addTo(map));
+
+      // Only fit bounds on first load, not on updates
+      if (markers.length > 0 && !window.mapInitialized) {
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds().pad(0.1));
+        pathMap.fitBounds(group.getBounds().pad(0.1));
+        window.mapInitialized = true;
+      }
+    }
+
+    // Update path visualization
+    function updatePathVisualization(data) {
+      // Clear existing path segments
+      Object.values(pathSegments).forEach(segments => {
+        segments.forEach(segment => pathMap.removeLayer(segment));
+      });
+      pathSegments = {};
+
+      // Initialize arrays for each layer
+      pathSegments.temperature = [];
+      pathSegments.airquality = [];
+      pathSegments.noise = [];
+      pathSegments.rssi = [];
+      pathSegments.snr = [];
+
+      // Sort data by timestamp
+      const sortedData = [...data].sort((a, b) =>
+        new Date(a.created_at) - new Date(b.created_at)
+      );
+
+      // Create path segments
+      for (let i = 0; i < sortedData.length - 1; i++) {
+        const current = sortedData[i];
+        const next = sortedData[i + 1];
+
+        const lat1 = parseFloat(current.field4);
+        const lng1 = parseFloat(current.field5);
+        const lat2 = parseFloat(next.field4);
+        const lng2 = parseFloat(next.field5);
+
+        // Skip if coordinates are invalid or if there's no movement (same location)
+        if (lat1 && lng1 && lat2 && lng2 &&
+            lat1 !== 0 && lng1 !== 0 && lat2 !== 0 && lng2 !== 0 &&
+            (Math.abs(lat1 - lat2) > 0.00001 || Math.abs(lng1 - lng2) > 0.00001)) {
+          const temp = parseFloat(current.field1) || 0;
+          const aqi = parseInt(current.field2) || 0;
+          const noise = parseInt(current.field3) || 0;
+          const rssi = parseInt(current.field6) || 0;
+          const snr = parseFloat(current.field7) || 0;
+
+          // Create path segments for each layer
+          const tempSegment = L.polyline([[lat1, lng1], [lat2, lng2]], {
+            color: getColorForValue('temperature', temp),
+            weight: 5,
+            opacity: 0.8
+          }).bindPopup(`
+            <div style="font-family: Arial; color: #1e293b;">
+              <b>🌡️ Temperature:</b> ${temp.toFixed(1)}°C<br/>
+              <b>📅 Time:</b> ${new Date(current.created_at).toLocaleString()}
+            </div>
+          `);
+
+          const aqiSegment = L.polyline([[lat1, lng1], [lat2, lng2]], {
+            color: getColorForValue('airquality', aqi),
+            weight: 5,
+            opacity: 0.8
+          }).bindPopup(`
+            <div style="font-family: Arial; color: #1e293b;">
+              <b>💨 Air Quality:</b> ${aqi} AQI<br/>
+              <b>📅 Time:</b> ${new Date(current.created_at).toLocaleString()}
+            </div>
+          `);
+
+          const noiseSegment = L.polyline([[lat1, lng1], [lat2, lng2]], {
+            color: getColorForValue('noise', noise),
+            weight: 5,
+            opacity: 0.8
+          }).bindPopup(`
+            <div style="font-family: Arial; color: #1e293b;">
+              <b>🔊 Noise:</b> ${noise} dB<br/>
+              <b>📅 Time:</b> ${new Date(current.created_at).toLocaleString()}
+            </div>
+          `);
+
+          const rssiSegment = L.polyline([[lat1, lng1], [lat2, lng2]], {
+            color: getColorForValue('rssi', rssi),
+            weight: 5,
+            opacity: 0.8
+          }).bindPopup(`
+            <div style="font-family: Arial; color: #1e293b;">
+              <b>📡 RSSI:</b> ${rssi} dBm<br/>
+              <b>📅 Time:</b> ${new Date(current.created_at).toLocaleString()}
+            </div>
+          `);
+
+          const snrSegment = L.polyline([[lat1, lng1], [lat2, lng2]], {
+            color: getColorForValue('snr', snr),
+            weight: 5,
+            opacity: 0.8
+          }).bindPopup(`
+            <div style="font-family: Arial; color: #1e293b;">
+              <b>📊 SNR:</b> ${snr.toFixed(1)} dB<br/>
+              <b>📅 Time:</b> ${new Date(current.created_at).toLocaleString()}
+            </div>
+          `);
+
+          pathSegments.temperature.push(tempSegment);
+          pathSegments.airquality.push(aqiSegment);
+          pathSegments.noise.push(noiseSegment);
+          pathSegments.rssi.push(rssiSegment);
+          pathSegments.snr.push(snrSegment);
+        }
+      }
+
+      // Show initial path layer
+      showPathLayer(currentLayer);
+    }
+
+    function showPathLayer(layer) {
+      // Hide all path segments
+      Object.values(pathSegments).forEach(segments => {
+        segments.forEach(segment => {
+          if (pathMap.hasLayer(segment)) {
+            pathMap.removeLayer(segment);
+          }
+        });
+      });
+
+      // Show selected layer segments
+      if (pathSegments[layer]) {
+        pathSegments[layer].forEach(segment => segment.addTo(pathMap));
+      }
+
+      // Update path legend
+      updatePathLegend(layer);
+    }
+    
+    function toggleHeatmapLayer(layer) {
+      currentLayer = layer;
+      showHeatmapLayer(layer);
+      showPathLayer(layer);
+      updateLegend(layer);
+
+      // Update button styles
+      document.querySelectorAll('.map-layer-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      document.getElementById(`btn-${layer}`).classList.add('active');
+    }
+
+    function updatePathLegend(layer) {
+      const legends = {
+        temperature: {
+          title: '🌡️ Temperature Path',
+          gradient: 'linear-gradient(to right, blue, yellow, red)',
+          labels: ['20°C', '35°C', '50°C'],
+          description: 'Path segments colored by temperature values at each measurement point'
+        },
+        airquality: {
+          title: '💨 Air Quality Path',
+          gradient: 'linear-gradient(to right, #00ff00, #7fff00, #ffff00, #ff7f00, #ff0000, #8b0000)',
+          labels: ['0 AQI (Good)', '100 AQI', '200 AQI (Poor)'],
+          description: 'Path segments colored by air quality index values'
+        },
+        noise: {
+          title: '🔊 Noise Level Path',
+          gradient: 'linear-gradient(to right, #00bfff, #9370db, #ff1493, #ff0000, #8b0000)',
+          labels: ['0 dB', '200 dB', '400 dB'],
+          description: 'Path segments colored by noise level values'
+        },
+        rssi: {
+          title: '📡 Signal Strength Path',
+          gradient: 'linear-gradient(to right, darkred, orange, green)',
+          labels: ['-120 dBm (Weak)', '-80 dBm', '-40 dBm (Strong)'],
+          description: 'Path segments colored by RSSI values'
+        },
+        snr: {
+          title: '📊 Signal Quality Path',
+          gradient: 'linear-gradient(to right, red, yellow, cyan)',
+          labels: ['-10 dB (Poor)', '5 dB', '20 dB (Good)'],
+          description: 'Path segments colored by SNR values'
+        }
+      };
+
+      const legend = legends[layer];
+      document.getElementById('path-legend-title').textContent = legend.title;
+      document.getElementById('path-legend-gradient').style.background = legend.gradient;
+      document.getElementById('path-legend-labels').innerHTML = legend.labels.map(label =>
+        `<span>${label}</span>`
+      ).join('');
+      document.getElementById('path-legend-description').textContent = legend.description;
+    }
+
+    function updateLegend(layer) {
+      const legends = {
+        temperature: {
+          title: '🌡️ Temperature Heatmap',
+          gradient: 'linear-gradient(to right, blue, yellow, red)',
+          labels: ['20°C', '35°C', '50°C'],
+          description: 'Blue = cooler temperatures, Yellow = moderate, Red = hotter temperatures'
+        },
+        airquality: {
+          title: '💨 Air Quality Index Heatmap',
+          gradient: 'linear-gradient(to right, #00ff00, #7fff00, #ffff00, #ff7f00, #ff0000, #8b0000)',
+          labels: ['0 AQI (Good)', '100 AQI', '200 AQI (Poor)'],
+          description: 'Green = good air quality, Yellow = moderate, Orange/Red = poor to hazardous air'
+        },
+        noise: {
+          title: '🔊 Noise Level Heatmap',
+          gradient: 'linear-gradient(to right, #00bfff, #9370db, #ff1493, #ff0000, #8b0000)',
+          labels: ['0 dB', '200 dB', '400 dB'],
+          description: 'Blue = quiet areas, Purple = moderate noise, Pink/Red = loud areas'
+        },
+        rssi: {
+          title: '📡 Signal Strength (RSSI) Heatmap',
+          gradient: 'linear-gradient(to right, darkred, orange, green)',
+          labels: ['-120 dBm (Weak)', '-80 dBm', '-40 dBm (Strong)'],
+          description: 'Red = weak signal, Orange = moderate signal, Green = strong signal'
+        },
+        snr: {
+          title: '📊 Signal Quality (SNR) Heatmap',
+          gradient: 'linear-gradient(to right, red, yellow, cyan)',
+          labels: ['-10 dB (Poor)', '5 dB', '20 dB (Good)'],
+          description: 'Red = poor quality, Yellow = moderate quality, Cyan = good quality'
+        }
+      };
+
+      const legend = legends[layer];
+      document.getElementById('legend-title').textContent = legend.title;
+      document.getElementById('legend-gradient').style.background = legend.gradient;
+      document.getElementById('legend-labels').innerHTML = legend.labels.map(label =>
+        `<span>${label}</span>`
+      ).join('');
+      document.getElementById('legend-description').textContent = legend.description;
+    }
+    
+    function showHeatmapLayer(layer) {
+      // Hide all value circle layers
+      Object.values(valueCircles).forEach(circles => {
+        circles.forEach(circle => {
+          if (map.hasLayer(circle)) {
+            map.removeLayer(circle);
+          }
+        });
+      });
+
+      // Show selected layer circles
+      if (valueCircles[layer]) {
+        valueCircles[layer].forEach(circle => circle.addTo(map));
+      }
+    }
+    
+    function getAirQualityStatus(aqi) {
+      if (aqi < 50) return { label: 'Good', color: 'bg-emerald-500' };
+      if (aqi < 120) return { label: 'Poor', color: 'bg-amber-500' };
+      if (aqi < 200) return { label: 'Very Bad', color: 'bg-orange-500' };
+      if (aqi < 350) return { label: 'Hazardous', color: 'bg-rose-500' };
+      return { label: 'Toxic', color: 'bg-red-900' };
+    }
+    
+    function getSignalStrength(rssi) {
+      if (rssi >= -80) return { label: 'Excellent', color: 'bg-emerald-500' };
+      if (rssi >= -100) return { label: 'Good', color: 'bg-cyan-500' };
+      if (rssi >= -110) return { label: 'Fair', color: 'bg-amber-500' };
+      return { label: 'Poor', color: 'bg-rose-500' };
+    }
+    
+    // Initialize
+    initMap();
+    updateLegend('temperature'); // Initialize legend with default layer
+    updatePathLegend('temperature'); // Initialize path legend
+    fetchThingSpeakData();
+
+    // Update every 15 seconds
+    setInterval(fetchThingSpeakData, 15000);
+  </script>
+</body>
+</html>
